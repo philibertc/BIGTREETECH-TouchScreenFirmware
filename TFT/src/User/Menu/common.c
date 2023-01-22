@@ -13,7 +13,7 @@ uint8_t currentFan = 0;
 uint8_t currentSpeedID = 0;
 static uint32_t lastTime = 0;
 
-//Icons list for tool change
+// Icons list for tool change
 const ITEM itemTool[MAX_HEATER_COUNT] =
 {
 // icon                          label
@@ -203,11 +203,11 @@ void drawStandardValue(const GUI_RECT *rect, VALUE_TYPE valType, const void *val
 }
 
 // Show/draw a temperature in a standard menu
-void temperatureReDraw(uint8_t toolIndex, int16_t * temp, bool skipHeader)
+void temperatureReDraw(uint8_t toolIndex, int16_t * temp, bool drawHeader)
 {
   char tempstr[20];
 
-  if (!skipHeader)
+  if (drawHeader)
   {
     displayExhibitHeader(heatDisplayID[toolIndex], "ºC");
   }
@@ -221,11 +221,11 @@ void temperatureReDraw(uint8_t toolIndex, int16_t * temp, bool skipHeader)
 }
 
 // Show/draw fan in a standard menu
-void fanReDraw(uint8_t fanIndex, bool skipHeader)
+void fanReDraw(uint8_t fanIndex, bool drawHeader)
 {
   char tempstr[20];
 
-  if (!skipHeader)
+  if (drawHeader)
   {
     displayExhibitHeader(fanID[fanIndex], (infoSettings.fan_percentage == 1) ? " % " : "PWM");
   }
@@ -239,11 +239,11 @@ void fanReDraw(uint8_t fanIndex, bool skipHeader)
 }
 
 // Show/draw extruder in a standard menu
-void extruderReDraw(uint8_t extruderIndex, float extrusion, bool skipHeader)
+void extruderReDraw(uint8_t extruderIndex, float extrusion, bool drawHeader)
 {
   char tempstr[20];
 
-  if (!skipHeader)
+  if (drawHeader)
   {
     displayExhibitHeader(extruderDisplayID[extruderIndex], "mm");
   }
@@ -253,11 +253,11 @@ void extruderReDraw(uint8_t extruderIndex, float extrusion, bool skipHeader)
 }
 
 // Show/draw percentage in a standard menu
-void percentageReDraw(uint8_t itemIndex, bool skipHeader)
+void percentageReDraw(uint8_t itemIndex, bool drawHeader)
 {
   char tempstr[20];
 
-  if (!skipHeader)
+  if (drawHeader)
   {
     displayExhibitHeader((char *)textSelect((itemIndex == 0) ? LABEL_PERCENTAGE_SPEED : LABEL_PERCENTAGE_FLOW), "%");
   }
@@ -270,7 +270,7 @@ static void redrawMenu(MENU_TYPE menuType)
 { // used only when exiting from numpad
   if (menuType == MENU_TYPE_ICON)
     menuDrawPage(getCurMenuItems());
-  else if(menuType == MENU_TYPE_LISTVIEW)
+  else if (menuType == MENU_TYPE_LISTVIEW)
     listViewRefreshMenu();
 }
 
@@ -304,8 +304,42 @@ float editFloatValue(float minValue, float maxValue, float resetValue, float val
   return NOBEYOND(minValue, val, maxValue);
 }
 
-NOZZLE_STATUS warmupNozzle(uint8_t toolIndex, void (* callback)(void))
+// Backup of current Settings data
+static SETTINGS * nowInfoSettings = NULL;
+
+// Backup current Settings data if not already backed up
+void backupCurrentSettings(void)
 {
+  if (nowInfoSettings == NULL)
+  {
+    nowInfoSettings = (SETTINGS *) malloc(sizeof(SETTINGS));
+    *nowInfoSettings = infoSettings;
+  }
+}
+
+// Store new Settings data to FLASH, if changed, and release backed up Settings data
+void storeCurrentSettings(void)
+{
+  if (nowInfoSettings != NULL)
+  {
+    if (memcmp(nowInfoSettings, &infoSettings, sizeof(SETTINGS)))  // if settings have been modified, save to FLASH
+      storePara();
+
+    free(nowInfoSettings);
+    nowInfoSettings = NULL;
+  }
+}
+
+// set the hotend to the minimum extrusion temperature if user selected "OK"
+void heatToMinTemp(void)
+{
+  heatSetTargetTemp(heatGetCurrentTool(), infoSettings.min_ext_temp, FROM_GUI);
+}
+
+NOZZLE_STATUS warmupNozzle(void)
+{
+  uint8_t toolIndex = heatGetCurrentTool();
+
   if (heatGetTargetTemp(toolIndex) < infoSettings.min_ext_temp)
   {
     if (heatGetCurrentTemp(toolIndex) < infoSettings.min_ext_temp)
@@ -317,16 +351,14 @@ NOZZLE_STATUS warmupNozzle(uint8_t toolIndex, void (* callback)(void))
       sprintf(tempStr, (char *)textSelect(LABEL_HEAT_HOTEND), infoSettings.min_ext_temp);
       strcat(tempMsg, "\n");
       strcat(tempMsg, tempStr);
-
-      setDialogText(LABEL_WARNING, (uint8_t *)tempMsg, LABEL_CONFIRM, LABEL_CANCEL);
-      showDialog(DIALOG_TYPE_ERROR, callback, NULL, NULL);
+      popupDialog(DIALOG_TYPE_ERROR, LABEL_WARNING, (uint8_t *)tempMsg, LABEL_CONFIRM, LABEL_CANCEL, heatToMinTemp, NULL, NULL);
 
       return COLD;
     }
     // temperature falling down to a target lower than the minimal extrusion temperature
     else
     { // contiunue with current temp but no lower than the minimum extruder temperature
-      heatSetTargetTemp(toolIndex, MAX(infoSettings.min_ext_temp, heatGetCurrentTemp(toolIndex)));
+      heatSetTargetTemp(toolIndex, MAX(infoSettings.min_ext_temp, heatGetCurrentTemp(toolIndex)), FROM_GUI);
       return SETTLING;
     }
   }
@@ -342,8 +374,7 @@ NOZZLE_STATUS warmupNozzle(uint8_t toolIndex, void (* callback)(void))
       strcat(tempMsg, "\n");
       strcat(tempMsg, tempStr);
 
-      setDialogText(LABEL_WARNING, (uint8_t *)tempMsg, LABEL_CONFIRM, LABEL_BACKGROUND);
-      showDialog(DIALOG_TYPE_ERROR, NULL, NULL, NULL);
+      popupReminder(DIALOG_TYPE_ERROR, LABEL_WARNING, (uint8_t *)tempMsg);
       return COLD;
     }
   }
@@ -351,7 +382,9 @@ NOZZLE_STATUS warmupNozzle(uint8_t toolIndex, void (* callback)(void))
   return HEATED;
 }
 
-// user choice for disabling all heaters/hotends
+#ifdef SAFETY_ALERT
+
+// User choice for disabling all heaters/hotends
 void cooldownTemperature(void)
 {
   if (!isPrinting())
@@ -360,10 +393,11 @@ void cooldownTemperature(void)
     {
       if (heatGetTargetTemp(i) > 0)
       {
-        setDialogText(LABEL_WARNING, LABEL_HEATERS_ON, LABEL_CONFIRM, LABEL_CANCEL);
-        showDialog(DIALOG_TYPE_QUESTION, heatCoolDown, NULL, NULL);
+        popupDialog(DIALOG_TYPE_QUESTION, LABEL_WARNING, LABEL_HEATERS_ON, LABEL_CONFIRM, LABEL_CANCEL, heatCoolDown, NULL, NULL);
         break;
       }
     }
   }
 }
+
+#endif  // SAFETY_ALERT

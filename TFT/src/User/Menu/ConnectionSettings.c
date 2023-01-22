@@ -8,7 +8,7 @@ void updateListeningMode(MENUITEMS * menu)
   if (GET_BIT(infoSettings.general_settings, INDEX_LISTENING_MODE) == 1)
   {
     menu->items[4].label.index = LABEL_OFF;
-    reminderMessage(LABEL_LISTENING, STATUS_LISTENING);
+    reminderMessage(LABEL_LISTENING, SYS_STATUS_LISTENING);
   }
   else
   {
@@ -50,7 +50,8 @@ void menuBaudrate(void)
   KEY_VALUES curIndex = KEY_IDLE;
   uint8_t curItem = 0;
   uint16_t curPage;
-  SETTINGS now = infoSettings;
+
+  backupCurrentSettings();  // backup current Settings data if not already backed up
 
   // fill baudrate items
   for (uint8_t i = 0; i < size; i++)
@@ -92,10 +93,7 @@ void menuBaudrate(void)
     loopProcess();
   }
 
-  if (memcmp(&now, &infoSettings, sizeof(SETTINGS)))
-  {
-    storePara();
-  }
+  storeCurrentSettings();  // store new Settings data to FLASH, if changed, and release backed up Settings data
 }
 
 void menuSerialPorts(void)
@@ -141,8 +139,8 @@ void menuConnectionSettings(void)
       {ICON_STOP,                    LABEL_EMERGENCYSTOP},
       {ICON_SHUT_DOWN,               LABEL_SHUT_DOWN},
       {ICON_BAUD_RATE,               LABEL_ON},
-      {ICON_BACKGROUND,              LABEL_BACKGROUND},
-      {ICON_BACKGROUND,              LABEL_BACKGROUND},
+      {ICON_NULL,                    LABEL_NULL},
+      {ICON_NULL,                    LABEL_NULL},
       {ICON_BACK,                    LABEL_BACK},
     }
   };
